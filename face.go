@@ -108,6 +108,7 @@ type FaceRecognizer struct {
 	faceEncoder    gocv.Net
 	modelConfig    ModelConfig
 	persons        map[string]*Person
+	storage        FaceStorage // Storage backend
 	mu             sync.RWMutex
 	threshold      float32
 	pigoParams     PigoParams
@@ -177,11 +178,19 @@ func WithMaxFaceSize(size int) Option {
 	}
 }
 
+// WithStorage sets a custom storage backend
+func WithStorage(storage FaceStorage) Option {
+	return func(fr *FaceRecognizer) {
+		fr.storage = storage
+	}
+}
+
 // NewFaceRecognizer creates a new FaceRecognizer instance
 func NewFaceRecognizer(config Config, opts ...Option) (*FaceRecognizer, error) {
 	fr := &FaceRecognizer{
 		persons:   make(map[string]*Person),
-		threshold: 0.6, // Default threshold
+		storage:   NewMemoryStorage(), // Default to memory storage
+		threshold: 0.6,                // Default threshold
 		pigoParams: PigoParams{
 			MinSize:          100,
 			MaxSize:          1000,
@@ -532,6 +541,13 @@ func (fr *FaceRecognizer) GetThreshold() float32 {
 // GetModelConfig returns the current model configuration
 func (fr *FaceRecognizer) GetModelConfig() ModelConfig {
 	return fr.modelConfig
+}
+
+// GetStorage returns the storage backend
+func (fr *FaceRecognizer) GetStorage() FaceStorage {
+	fr.mu.RLock()
+	defer fr.mu.RUnlock()
+	return fr.storage
 }
 
 // GetSampleCount returns the number of samples for a person
