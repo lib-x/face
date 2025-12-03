@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 // ModelInfo contains information about a downloadable model
@@ -22,7 +25,7 @@ type ModelInfo struct {
 	ModelType   ModelType
 }
 
-// Available models for download
+// AvailableModels Available models for download
 var AvailableModels = map[string]ModelInfo{
 	"pigo-facefinder": {
 		Name:        "Pigo Face Detector",
@@ -76,6 +79,7 @@ type ModelDownloader struct {
 	OnProgress       ProgressCallback
 	Timeout          time.Duration
 	SkipVerification bool
+	ProxyURL         string // SOCKS5 or HTTP proxy URL (e.g., "socks5://127.0.0.1:10808")
 }
 
 // NewModelDownloader creates a new model downloader
@@ -127,9 +131,10 @@ func (md *ModelDownloader) DownloadModel(model ModelInfo) error {
 	fmt.Printf("URL: %s\n", model.URL)
 	fmt.Printf("Output: %s\n", outputPath)
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: md.Timeout,
+	// Create HTTP client with timeout and proxy support
+	client, err := md.createHTTPClient()
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP client: %v", err)
 	}
 
 	// Make request
@@ -368,4 +373,44 @@ func formatDuration(d time.Duration) string {
 	minutes := int(d.Minutes())
 	seconds := int(d.Seconds()) % 60
 	return fmt.Sprintf("%dm %ds", minutes, seconds)
+}
+
+// createHTTPClient creates an HTTP client with proxy support
+func (md *ModelDownloader) createHTTPClient() (*http.Client, error) {
+	client := &http.Client{
+		Timeout: md.Timeout,
+	}
+
+	// If proxy URL is provided, configure the client to use it
+	if md.ProxyURL != "" {
+		proxyURL, err := url.Parse(md.ProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL: %v", err)
+		}
+
+		switch proxyURL.Scheme {
+		case "socks5":
+			// SOCKS5 proxy
+			dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, nil, proxy.Direct)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create SOCKS5 dialer: %v", err)
+			}
+			client.Transport = &http.Transport{
+				Dial: dialer.Dial,
+			}
+			fmt.Printf("Using SOCKS5 proxy: %s\n", proxyURL.Host)
+
+		case "http", "https":
+			// HTTP/HTTPS proxy
+			client.Transport = &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			}
+			fmt.Printf("Using HTTP proxy: %s\n", md.ProxyURL)
+
+		default:
+			return nil, fmt.Errorf("unsupported proxy scheme: %s (supported: socks5, http, https)", proxyURL.Scheme)
+		}
+	}
+
+	return client, nil
 }

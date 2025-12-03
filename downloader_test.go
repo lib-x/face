@@ -3,6 +3,7 @@ package face
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -107,7 +108,7 @@ func TestDownloadModel_MockServer(t *testing.T) {
 
 	// Create mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", string(rune(len(testData))))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(testData)))
 		w.Write(testData)
 	}))
 	defer server.Close()
@@ -162,7 +163,7 @@ func TestDownloadModel_ProgressCallback(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", string(rune(len(testData))))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(testData)))
 		// Write in chunks to test progress
 		chunkSize := 1024 * 10
 		for i := 0; i < len(testData); i += chunkSize {
