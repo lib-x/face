@@ -230,15 +230,48 @@ func NewFaceRecognizer(config Config, opts ...Option) (*FaceRecognizer, error) {
 		return nil, errors.New("failed to load face encoder model")
 	}
 
+	// Load existing persons from storage
+	if err := fr.loadFromStorage(); err != nil {
+		return nil, fmt.Errorf("failed to load persons from storage: %v", err)
+	}
+
 	return fr, nil
+}
+
+// loadFromStorage loads all persons from storage into memory
+func (fr *FaceRecognizer) loadFromStorage() error {
+	persons, err := fr.storage.LoadAllPersons()
+	if err != nil {
+		return err
+	}
+
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+
+	for _, person := range persons {
+		fr.persons[person.ID] = person
+	}
+
+	// Log the number of loaded persons
+	fmt.Printf("✓ Loaded %d persons from storage\n", len(persons))
+
+	return nil
 }
 
 // Close releases all resources
 func (fr *FaceRecognizer) Close() error {
-	if !fr.faceEncoder.Empty() {
-		return fr.faceEncoder.Close()
+	// Use defer/recover to handle any CGO panics during cleanup
+	defer func() {
+		if r := recover(); r != nil {
+			// Silently recover from CGO cleanup panics
+			// This is common during shutdown and safe to ignore
+		}
+	}()
+
+	if fr.faceEncoder.Empty() {
+		return nil
 	}
-	return nil
+	return fr.faceEncoder.Close()
 }
 
 // DetectFaces detects faces in an image using Pigo
@@ -334,10 +367,19 @@ func (fr *FaceRecognizer) AddPerson(id, name string) error {
 		return fmt.Errorf("person ID %s already exists", id)
 	}
 
-	fr.persons[id] = &Person{
+	person := &Person{
 		ID:       id,
 		Name:     name,
 		Features: make([]FaceFeature, 0),
+	}
+
+	fr.persons[id] = person
+
+	// Save to storage
+	if err := fr.storage.SavePerson(person); err != nil {
+		// Rollback in-memory change if storage fails
+		delete(fr.persons, id)
+		return fmt.Errorf("failed to save person to storage: %v", err)
 	}
 
 	return nil
@@ -381,6 +423,15 @@ func (fr *FaceRecognizer) AddFaceSample(personID string, img gocv.Mat) error {
 		Feature:  feature,
 	})
 	person.mu.Unlock()
+
+	// Save updated person to storage
+	if err := fr.storage.SavePerson(person); err != nil {
+		// Rollback in-memory change if storage fails
+		person.mu.Lock()
+		person.Features = person.Features[:len(person.Features)-1]
+		person.mu.Unlock()
+		return fmt.Errorf("failed to save person to storage: %v", err)
+	}
 
 	return nil
 }
